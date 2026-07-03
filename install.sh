@@ -35,9 +35,18 @@ ok "claude found: $(command -v claude)"
 command -v git >/dev/null 2>&1 || die "git is not installed or not on PATH. It is required — 'claude plugin marketplace add' clones the private marketplace over git. Install it: https://git-scm.com/downloads"
 ok "git found: $(command -v git)"
 # JSON editor for the settings merge (prefer python3, fall back to jq).
-if command -v python3 >/dev/null 2>&1; then JSON_TOOL=python3
-elif command -v jq >/dev/null 2>&1; then JSON_TOOL=jq
-else die "need either python3 or jq to write settings.local.json (macOS: 'brew install jq'; Debian/Ubuntu: 'sudo apt-get install jq')"; fi
+# `command -v` alone isn't enough: on Windows, `python3` on PATH can resolve to the
+# Microsoft Store's app-execution-alias stub — a real, executable file that satisfies
+# `command -v` but doesn't run Python at all (invoking it launches the Store listing
+# and exits non-zero). Probe that it actually runs before trusting it, so we fall back
+# to jq (or fail fast here in Step 0) instead of dying much later at the settings write.
+if command -v python3 >/dev/null 2>&1 && python3 -c 'import sys' >/dev/null 2>&1; then
+  JSON_TOOL=python3
+elif command -v jq >/dev/null 2>&1; then
+  JSON_TOOL=jq
+else
+  die "need either a working python3 or jq to write settings.local.json (macOS: 'brew install jq'; Debian/Ubuntu: 'sudo apt-get install jq'; Windows: if 'python3' opens the Microsoft Store instead of running, disable the stub at Settings > Apps > Advanced app settings > App execution aliases, or install jq)"
+fi
 ok "JSON tool: $JSON_TOOL"
 
 # Safety: the tenant dir is the CURRENT dir. Refuse to scope-install straight into \$HOME.
