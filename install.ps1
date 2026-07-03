@@ -65,7 +65,19 @@ $CredFile = Join-Path $HOME ".wild-west-git-credentials"
 $CredFileGit = '"' + ($CredFile -replace '\\','/') + '"'
 # --replace-all: a re-run (second tenant, retry after a bad token) leaves multiple
 # values on this key; a plain set would die with "cannot overwrite multiple values".
-git config --global --replace-all credential.https://github.com.helper ""
+# Windows PowerShell 5.1 (Desktop edition) silently DROPS a bare "" argument when invoking
+# a native command (PowerShell/PowerShell#3223) - git then sees only one argument and errors
+# "wrong number of arguments", and the reset silently no-ops, leaving any pre-existing
+# github.com helper in place alongside ours (#675). PowerShell 6+/pwsh (Core edition) does
+# not have this bug - a bare "" lands correctly there. The literal two-character string '""'
+# sidesteps the Desktop-edition bug: Windows' native command-line quoting recognizes an
+# explicit empty-quoted token and delivers git a genuine empty-string argument, so branch on
+# edition rather than using one form everywhere.
+if ($PSVersionTable.PSEdition -eq 'Desktop') {
+  git config --global --replace-all credential.https://github.com.helper '""'
+} else {
+  git config --global --replace-all credential.https://github.com.helper ""
+}
 git config --global --add credential.https://github.com.helper "store --file=$CredFileGit"
 # LF + no BOM: git credential-store silently rejects CRLF/BOM-tainted entries.
 [System.IO.File]::WriteAllText($CredFile, "https://x-access-token:$Token@github.com`n", [System.Text.UTF8Encoding]::new($false))
@@ -81,8 +93,18 @@ OK "clone auth verified against $MktRepo"
 
 # --- 3. marketplace add + scoped install ------------------------------------
 # Idempotent: a second tenant on the same machine already has the marketplace.
-try { $mktList = claude plugin marketplace list 2>$null | Out-String } catch { $mktList = "" }
-if ($mktList -match [regex]::Escape($MktName)) {
+# Match the marketplace NAME EXACTLY via --json (never a substring/regex match) -
+# "$MktName" and "$MktName-staging" are prefix-related, so a plain -match would let
+# a registered "...-staging" marketplace satisfy the check for the non-staging name
+# (and vice versa).
+function Test-MktAlreadyAdded {
+  param($Name)
+  try { $mktJson = claude plugin marketplace list --json 2>$null | Out-String } catch { $mktJson = "" }
+  if (-not $mktJson.Trim()) { return $false }
+  try { $mktList = $mktJson | ConvertFrom-Json } catch { return $false }
+  return [bool]($mktList | Where-Object { $_.name -eq $Name })
+}
+if (Test-MktAlreadyAdded $MktName) {
   OK "marketplace $MktName already added - skipping add"
 } else {
   Say "Adding marketplace: $MktRepo"

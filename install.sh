@@ -94,7 +94,26 @@ ok "clone auth verified against $WW_MKT_REPO"
 
 # --- 3. marketplace add + scoped install ------------------------------------
 # Idempotent: a second tenant on the same machine already has the marketplace.
-if claude plugin marketplace list 2>/dev/null | grep -q "$WW_MKT_NAME"; then
+# Match the marketplace NAME EXACTLY via --json (never a substring/regex match) —
+# "$WW_MKT_NAME" and "$WW_MKT_NAME-staging" are prefix-related, so a plain `grep`
+# would let a registered "...-staging" marketplace satisfy the check for the
+# non-staging name (and vice versa).
+mkt_already_added() {
+  local name="$1"
+  if [ "$JSON_TOOL" = python3 ]; then
+    claude plugin marketplace list --json 2>/dev/null | python3 -c '
+import json, sys
+try:
+    data = json.load(sys.stdin)
+except Exception:
+    data = []
+sys.exit(0 if any(m.get("name") == sys.argv[1] for m in data) else 1)
+' "$name"
+  else
+    claude plugin marketplace list --json 2>/dev/null | jq -e --arg n "$name" 'any(.[]?; .name == $n)' >/dev/null 2>&1
+  fi
+}
+if mkt_already_added "$WW_MKT_NAME"; then
   ok "marketplace $WW_MKT_NAME already added — skipping add"
 else
   say "Adding marketplace: $WW_MKT_REPO"
